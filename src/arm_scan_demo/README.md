@@ -100,6 +100,28 @@ yet!` or the controller spawner retrying `/controller_manager`, raise it:
 ros2 launch arm_scan_demo ur10e_sim_demo.launch.py scan_start_delay:=45.0
 ```
 
+### Capturing a run
+Rather than selecting terminal output by hand, use the wrapper — it saves
+everything about one run into `dump/<timestamp>/`:
+```bash
+./src/arm_scan_demo/scripts/run_scan.sh                       # ur10e_sim_demo.launch.py
+./src/arm_scan_demo/scripts/run_scan.sh test.launch.py
+./src/arm_scan_demo/scripts/run_scan.sh test.launch.py scan_start_delay:=45.0
+```
+| file | contents |
+| --- | --- |
+| `summary.txt` | scan tally, waypoint outcomes, collision pairs by frequency, distinct errors — printed to the terminal too |
+| `console-clean.log` | full output, ANSI stripped, `\r` progress lines split into real lines |
+| `console.log` | raw terminal capture |
+| `environment.txt` | git commit, working-tree state, package prefixes, ROS env |
+| `ros_log/` | ROS 2's own per-node logs, normally buried in `~/.ros/log/` |
+
+It refuses to start if Gazebo is already running. A leftover `gzserver` keeps
+serving `/spawn_entity`, so the new one exits 255, `spawn_entity` reports
+`Entity [ur] already exists`, the controllers fail to configure, and the scan
+silently executes against the previously loaded robot. Pass `--kill-stale` to
+clear it automatically.
+
 In RViz, add displays on the `base_link` frame for `/poses` (PoseArray),
 `/visualization_marker` (Marker — sphere, floor, pedestals) and
 `/visualization_marker_array` (MarkerArray — waypoint dots and orientation

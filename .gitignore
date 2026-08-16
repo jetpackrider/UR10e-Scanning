@@ -1,6 +1,12 @@
 build/
 install/
 log/
+
+# Captured runs (src/arm_scan_demo/scripts/run_scan.sh).
+# console-clean.log, summary.txt and environment.txt stay tracked so a run can
+# be shared; the raw console copy and ROS's per-node logs are redundant bulk.
+dump/*/console.log
+dump/*/ros_log/
 **/__pycache__/
 *.pyc
 .vscode/
