@@ -3,6 +3,7 @@
 Sphere scan using pymoveit2 (ROS 2 Humble).
 """
 
+import inspect
 import sys
 import time
 import threading
@@ -141,9 +142,10 @@ TOOL_COLLISION_TOUCH_LINKS = [
 NUM_POINTS = 24
 SCAN_PATTERN = "full_sphere"
 ELEVATIONS_DEG = [-30.0, 0.0, 30.0]
+# Only bites once NUM_POINTS is large enough to place a point above
+# 90 - POLE_EXCLUSION_DEG; at NUM_POINTS = 24 the highest point sits at
+# 73.4 deg, so nothing is dropped.
 POLE_EXCLUSION_DEG = 15.0
-
-PER_POINT_TIMEOUT_SEC = 15.0
 
 
 # ============================================================
@@ -257,7 +259,7 @@ def rotation_matrix_to_quaternion(R):
         w = (R[1, 0] - R[0, 1]) / s
         x = (R[0, 2] + R[2, 0]) / s
         y = (R[1, 2] + R[2, 1]) / s
-        z = 0.25 / s
+        z = 0.25 * s
 
     return np.array([x, y, z, w])
 
@@ -676,6 +678,13 @@ def generate_scan(
 
     elif pattern == "bands":
 
+        if not elevations_deg:
+
+            raise ValueError(
+                "SCAN_PATTERN 'bands' requires a "
+                "non-empty ELEVATIONS_DEG."
+            )
+
         xyz_list = []
         quaternion_list = []
 
@@ -1090,34 +1099,47 @@ def add_planning_scene_objects(
 
     time.sleep(1.0)
 
-    logger.info(
-        f"Adding scan-object support pedestal "
-        f"from floor to sphere "
-        f"(height={SPHERE_SUPPORT_HEIGHT:.2f} m)..."
-    )
+    # A sphere resting on (or below) the floor leaves no room for a support,
+    # and a zero/negative box dimension is rejected by MoveIt.
+    if SPHERE_SUPPORT_HEIGHT <= 0.0:
 
-    moveit2.add_collision_box(
-        id=SPHERE_SUPPORT_COLLISION_ID,
-        size=(
-            SPHERE_SUPPORT_SIZE_XY[0],
-            SPHERE_SUPPORT_SIZE_XY[1],
-            SPHERE_SUPPORT_HEIGHT,
-        ),
-        position=[
-            float(SPHERE_CENTER[0]),
-            float(SPHERE_CENTER[1]),
-            float(SPHERE_SUPPORT_CENTER_Z),
-        ],
-        quat_xyzw=[
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-        ],
-        frame_id=BASE_FRAME,
-    )
+        logger.warn(
+            f"Skipping scan-object support: computed height "
+            f"{SPHERE_SUPPORT_HEIGHT:.3f} m is not positive. "
+            f"Raise SPHERE_CENTER[2] above "
+            f"{FLOOR_TOP_Z + SPHERE_RADIUS:.3f} m."
+        )
 
-    time.sleep(1.0)
+    else:
+
+        logger.info(
+            f"Adding scan-object support pedestal "
+            f"from floor to sphere "
+            f"(height={SPHERE_SUPPORT_HEIGHT:.2f} m)..."
+        )
+
+        moveit2.add_collision_box(
+            id=SPHERE_SUPPORT_COLLISION_ID,
+            size=(
+                SPHERE_SUPPORT_SIZE_XY[0],
+                SPHERE_SUPPORT_SIZE_XY[1],
+                SPHERE_SUPPORT_HEIGHT,
+            ),
+            position=[
+                float(SPHERE_CENTER[0]),
+                float(SPHERE_CENTER[1]),
+                float(SPHERE_SUPPORT_CENTER_Z),
+            ],
+            quat_xyzw=[
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            ],
+            frame_id=BASE_FRAME,
+        )
+
+        time.sleep(1.0)
 
     logger.info(
         "Adding tool collision sphere..."
@@ -1202,21 +1224,59 @@ def publish_scene_status(logger):
 # ============================================================
 
 def get_joint_positions(moveit2):
+    """
+    Current joint positions, reordered into JOINT_NAMES order.
 
+    /joint_states is published in whatever order the driver chooses and may
+    carry joints outside the planning group, so it must be indexed by name
+    before it can be compared against a trajectory.
+    """
     joint_state = moveit2.joint_state
 
     if joint_state is None:
         return None
 
-    positions = np.asarray(
-        joint_state.position,
-        dtype=float,
-    )
+    index_by_name = {
+        name: index
+        for index, name in enumerate(joint_state.name)
+    }
 
-    if positions.size == 0:
+    try:
+
+        return np.array([
+            float(
+                joint_state.position[
+                    index_by_name[name]
+                ]
+            )
+            for name in JOINT_NAMES
+        ])
+
+    except (KeyError, IndexError):
+
         return None
 
-    return positions.copy()
+
+def get_current_tool_pose(moveit2):
+    """
+    Current end-effector pose.
+
+    pymoveit2's MoveIt2 has no get_current_pose(); forward kinematics is the
+    supported way to ask for it.
+    """
+    result = moveit2.compute_fk()
+
+    if result is None:
+        return None
+
+    if isinstance(result, (list, tuple)):
+
+        if not result:
+            return None
+
+        result = result[0]
+
+    return getattr(result, "pose", result)
 
 
 def format_duration(seconds):
@@ -1610,6 +1670,34 @@ def extract_final_joint_positions(plan):
     if len(final_positions) == 0:
         return None
 
+    # Reorder to JOINT_NAMES so this can be compared against
+    # get_joint_positions().
+    joint_names = list(
+        getattr(trajectory, "joint_names", [])
+    )
+
+    if joint_names:
+
+        index_by_name = {
+            name: index
+            for index, name in enumerate(joint_names)
+        }
+
+        try:
+
+            return np.array([
+                float(
+                    final_positions[
+                        index_by_name[name]
+                    ]
+                )
+                for name in JOINT_NAMES
+            ])
+
+        except (KeyError, IndexError):
+
+            return None
+
     return np.asarray(
         final_positions,
         dtype=float,
@@ -1627,77 +1715,61 @@ def execute_cartesian_fallback(
 
     try:
 
-        current_pose = (
-            moveit2.get_current_pose()
-        )
-
         positions_before = (
             get_joint_positions(moveit2)
         )
 
-        target_pose = Pose()
-
-        target_pose.position.x = float(
-            position[0]
-        )
-
-        target_pose.position.y = float(
-            position[1]
-        )
-
-        target_pose.position.z = float(
-            position[2]
-        )
-
-        target_pose.orientation.x = float(
-            orientation[0]
-        )
-
-        target_pose.orientation.y = float(
-            orientation[1]
-        )
-
-        target_pose.orientation.z = float(
-            orientation[2]
-        )
-
-        target_pose.orientation.w = float(
-            orientation[3]
-        )
-
-        plan, fraction = (
-            moveit2.plan_cartesian_path(
-                waypoints=[
-                    current_pose,
-                    target_pose,
-                ],
-                max_step=CARTESIAN_MAX_STEP,
-            )
-        )
-
-        logger.info(
-            f"Cartesian fallback fraction: "
-            f"{fraction:.3f} "
-            f"(required >= "
-            f"{CARTESIAN_FRACTION_THRESHOLD:.3f})"
-        )
-
-        if (
-            fraction
-            < CARTESIAN_FRACTION_THRESHOLD
+        # pymoveit2 has no plan_cartesian_path(). A straight-line plan is
+        # requested through plan(cartesian=True), which returns a
+        # JointTrajectory (or None). The fraction threshold is applied inside
+        # pymoveit2 rather than being returned to the caller.
+        if hasattr(
+            moveit2,
+            "cartesian_fraction_threshold",
         ):
 
-            logger.warn(
-                "Cartesian fallback rejected."
+            moveit2.cartesian_fraction_threshold = (
+                CARTESIAN_FRACTION_THRESHOLD
             )
 
-            return False
+        plan_kwargs = {
+            "position": [
+                float(value)
+                for value in position
+            ],
+            "quat_xyzw": [
+                float(value)
+                for value in orientation
+            ],
+            "frame_id": BASE_FRAME,
+            "cartesian": True,
+        }
+
+        # The step-size keyword was renamed between pymoveit2 releases.
+        accepted = inspect.signature(
+            moveit2.plan
+        ).parameters
+
+        for name in (
+            "cartesian_max_step",
+            "max_step",
+        ):
+
+            if name in accepted:
+
+                plan_kwargs[name] = CARTESIAN_MAX_STEP
+
+                break
+
+        plan = moveit2.plan(**plan_kwargs)
 
         if plan is None:
 
             logger.warn(
-                "Cartesian planner returned "
-                "no trajectory."
+                "Cartesian planner returned no "
+                "trajectory (path fraction below "
+                f"{CARTESIAN_FRACTION_THRESHOLD:.3f} "
+                "or IK failure)."
             )
 
             return False
@@ -1769,7 +1841,6 @@ def move_to_pose_and_wait(
     logger,
     position,
     orientation,
-    timeout_sec,
     waypoint_index,
     total_waypoints,
 ):
@@ -1918,7 +1989,6 @@ def run_scan(
             logger=logger,
             position=position,
             orientation=orientation,
-            timeout_sec=PER_POINT_TIMEOUT_SEC,
             waypoint_index=index,
             total_waypoints=total_waypoints,
         )
@@ -2025,8 +2095,24 @@ def main(args=None):
 
     executor.add_node(viz_node)
 
+    def spin_executor():
+        # Without this the thread can die on an rclpy error while the scan loop
+        # keeps running against a node that no longer processes callbacks.
+        try:
+
+            executor.spin()
+
+        except Exception as error:
+
+            if rclpy.ok():
+
+                viz_node.get_logger().error(
+                    f"[SCAN] Executor thread stopped: "
+                    f"{error}"
+                )
+
     executor_thread = threading.Thread(
-        target=executor.spin,
+        target=spin_executor,
         daemon=True,
     )
 
@@ -2080,8 +2166,15 @@ def main(args=None):
             try:
 
                 current_pose = (
-                    moveit2.get_current_pose()
+                    get_current_tool_pose(moveit2)
                 )
+
+                if current_pose is None:
+
+                    raise RuntimeError(
+                        "forward kinematics returned "
+                        "no pose"
+                    )
 
                 start_position = np.array([
                     current_pose.position.x,
@@ -2256,15 +2349,20 @@ def main(args=None):
 
         executor.shutdown()
 
-        viz_node.destroy_node()
-
-        rclpy.shutdown()
-
+        # Let the spin thread finish before the node it is spinning goes away.
         if executor_thread.is_alive():
 
             executor_thread.join(
                 timeout=2.0
             )
+
+        viz_node.destroy_node()
+
+        # On Ctrl-C rclpy's own signal handler has already shut the context
+        # down; calling shutdown() again raises RCLError and exits non-zero.
+        if rclpy.ok():
+
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

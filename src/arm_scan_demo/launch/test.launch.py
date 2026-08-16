@@ -8,13 +8,6 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
 
-    # Custom UR10e + tool description
-    custom_description = PathJoinSubstitution([
-        FindPackageShare("ur10e_tool_description"),
-        "urdf",
-        "ur10e_with_tool.urdf.xacro",
-    ])
-
     # Universal Robots Gazebo + MoveIt launch
     ur_sim_moveit_launch = PathJoinSubstitution([
         FindPackageShare("ur_simulation_gazebo"),
@@ -26,7 +19,11 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(ur_sim_moveit_launch),
         launch_arguments={
             "ur_type": "ur10e",
-            "description_file": custom_description,
+            # description_file is resolved against
+            # <description_package>/urdf/, so both have to be given and the
+            # file is a bare name rather than a full path.
+            "description_package": "ur10e_tool_description",
+            "description_file": "ur10e_with_tool.urdf.xacro",
         }.items(),
     )
 

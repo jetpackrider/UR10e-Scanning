@@ -13,11 +13,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
-    install_requires=['setuptools', 'numpy', 'pyquaternion'],
+    install_requires=['setuptools', 'numpy'],
     zip_safe=True,
     maintainer='you',
     maintainer_email='you@example.com',
-    description='Arc-scan pose sweep demo using MoveIt2 (moveit_py) on ROS2 Humble',
+    description='Sphere-scan pose sweep demo using MoveIt 2 via pymoveit2 on ROS 2 Humble',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

@@ -3,15 +3,26 @@
 <package format="3">
   <name>arm_scan_demo</name>
   <version>0.0.1</version>
-  <description>Arc-scan pose sweep demo using MoveIt2 (moveit_py) on ROS2 Humble</description>
+  <description>Sphere-scan pose sweep demo using MoveIt 2 via pymoveit2 on ROS 2 Humble</description>
   <maintainer email="you@example.com">you</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>moveit</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+
+  <!-- Not in rosdistro: clone pymoveit2 into this workspace's src/ so that
+       rosdep can resolve it from source rather than from apt. -->
+  <exec_depend>pymoveit2</exec_depend>
+
+  <!-- Used by launch/ -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ur_simulation_gazebo</exec_depend>
+  <exec_depend>ur10e_tool_description</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
