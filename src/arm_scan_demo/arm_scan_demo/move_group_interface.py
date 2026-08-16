@@ -13,8 +13,9 @@ from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-from geometry_msgs.msg import Pose, PoseArray
-from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Pose, PoseArray, Point
+from std_msgs.msg import ColorRGBA
+from visualization_msgs.msg import Marker, MarkerArray
 
 from pymoveit2 import MoveIt2
 
@@ -153,6 +154,34 @@ USE_NEAREST_NEIGHBOR_ORDERING = True
 
 
 # ============================================================
+# WAYPOINT MARKERS (scan points on the sphere)
+# ============================================================
+
+# Toggle the two visualization styles independently.
+SHOW_WAYPOINT_POINTS = True
+SHOW_WAYPOINT_AXES = True
+
+WAYPOINT_POINTS_NS = "scan_waypoint_points"
+WAYPOINT_POINTS_ID = 100
+WAYPOINT_POINT_SIZE = 0.015
+WAYPOINT_POINT_COLOR = (0.0, 1.0, 1.0)  # cyan
+
+WAYPOINT_AXES_NS = "scan_waypoint_axes"
+WAYPOINT_AXIS_LENGTH = 0.05
+WAYPOINT_AXIS_WIDTH = 0.004
+# RGB convention: X=red, Y=green, Z=blue (Z is the approach/look axis).
+WAYPOINT_AXIS_COLORS = (
+    (1.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (0.0, 0.4, 1.0),
+)
+
+WAYPOINT_LABELS_NS = "scan_waypoint_labels"
+SHOW_WAYPOINT_LABELS = False
+WAYPOINT_LABEL_SIZE = 0.02
+
+
+# ============================================================
 # TERMINAL PROGRESS
 # ============================================================
 
@@ -179,6 +208,18 @@ def quaternion_multiply(q1, q0):
         w1 * z0 + x1 * y0 - y1 * x0 + z1 * w0,
         w1 * w0 - x1 * x0 - y1 * y0 - z1 * z0,
     ])
+
+
+def rotate_vector_by_quaternion(v, q):
+    """
+    Rotate a 3D vector `v` by a quaternion `q` given as (x, y, z, w).
+    """
+    x, y, z, w = q
+    qv = np.array([x, y, z])
+
+    t = 2.0 * np.cross(qv, v)
+
+    return v + w * t + np.cross(qv, t)
 
 
 def rotation_matrix_to_quaternion(R):
@@ -398,6 +439,122 @@ def create_sphere_support_marker():
     marker.color.b = 0.38
 
     return marker
+
+
+def create_waypoint_points_marker(xyz):
+    """
+    A single POINTS marker showing every scan waypoint on the sphere
+    as a small dot. Cheap to render even for many waypoints.
+    """
+    marker = Marker()
+
+    marker.header.frame_id = BASE_FRAME
+    marker.ns = WAYPOINT_POINTS_NS
+    marker.id = WAYPOINT_POINTS_ID
+    marker.type = Marker.POINTS
+    marker.action = Marker.ADD
+
+    marker.pose.orientation.w = 1.0
+
+    marker.scale.x = float(WAYPOINT_POINT_SIZE)
+    marker.scale.y = float(WAYPOINT_POINT_SIZE)
+
+    marker.color.a = 1.0
+    marker.color.r = float(WAYPOINT_POINT_COLOR[0])
+    marker.color.g = float(WAYPOINT_POINT_COLOR[1])
+    marker.color.b = float(WAYPOINT_POINT_COLOR[2])
+
+    for position in xyz:
+        point = Point()
+        point.x = float(position[0])
+        point.y = float(position[1])
+        point.z = float(position[2])
+        marker.points.append(point)
+
+    return marker
+
+
+def create_waypoint_axes_marker_array(xyz, quaternions):
+    """
+    One small RGB coordinate-frame (X/Y/Z axis lines) per waypoint,
+    showing the scan orientation at each point on the sphere.
+    Packed into a single LINE_LIST marker for efficient rendering.
+    """
+    marker = Marker()
+
+    marker.header.frame_id = BASE_FRAME
+    marker.ns = WAYPOINT_AXES_NS
+    marker.id = 0
+    marker.type = Marker.LINE_LIST
+    marker.action = Marker.ADD
+
+    marker.pose.orientation.w = 1.0
+    marker.scale.x = float(WAYPOINT_AXIS_WIDTH)
+
+    axis_vectors = (
+        np.array([1.0, 0.0, 0.0]),
+        np.array([0.0, 1.0, 0.0]),
+        np.array([0.0, 0.0, 1.0]),
+    )
+
+    for position, quaternion in zip(xyz, quaternions):
+
+        origin = Point()
+        origin.x = float(position[0])
+        origin.y = float(position[1])
+        origin.z = float(position[2])
+
+        for axis_vector, color in zip(
+            axis_vectors,
+            WAYPOINT_AXIS_COLORS,
+        ):
+
+            rotated = rotate_vector_by_quaternion(
+                axis_vector,
+                quaternion,
+            )
+
+            tip = np.asarray(position) + (
+                rotated * WAYPOINT_AXIS_LENGTH
+            )
+
+            tip_point = Point()
+            tip_point.x = float(tip[0])
+            tip_point.y = float(tip[1])
+            tip_point.z = float(tip[2])
+
+            marker.points.append(origin)
+            marker.points.append(tip_point)
+
+            line_color = ColorRGBA(
+                r=float(color[0]),
+                g=float(color[1]),
+                b=float(color[2]),
+                a=1.0,
+            )
+
+            marker.colors.append(line_color)
+            marker.colors.append(line_color)
+
+    return marker
+
+
+def create_waypoint_delete_all_markers():
+    """
+    Clears previously published waypoint point/axis markers so that
+    re-running the script (e.g. with a different NUM_POINTS) doesn't
+    leave stale markers behind in RViz.
+    """
+    markers = []
+
+    for ns in (WAYPOINT_POINTS_NS, WAYPOINT_AXES_NS):
+        marker = Marker()
+        marker.header.frame_id = BASE_FRAME
+        marker.ns = ns
+        marker.action = Marker.DELETEALL
+        markers.append(marker)
+
+    return markers
 
 
 # ============================================================
@@ -642,10 +799,18 @@ class SphereScanVizNode(Node):
             10,
         )
 
+        self.marker_array_pub = self.create_publisher(
+            MarkerArray,
+            "/visualization_marker_array",
+            10,
+        )
+
         self._sphere_marker = None
         self._floor_marker = None
         self._pedestal_marker = None
         self._sphere_support_marker = None
+        self._waypoint_points_marker = None
+        self._waypoint_axes_marker = None
         self._pose_array = None
 
         self._viz_timer = self.create_timer(
@@ -712,6 +877,42 @@ class SphereScanVizNode(Node):
         )
         self._pose_array = pose_array
 
+        # ------------------------------------------------
+        # Waypoint markers (points / axes on the sphere)
+        # ------------------------------------------------
+
+        delete_markers = create_waypoint_delete_all_markers()
+
+        for marker in delete_markers:
+            marker.header.stamp = now
+
+        self.marker_array_pub.publish(
+            MarkerArray(markers=delete_markers)
+        )
+
+        waypoint_points_marker = None
+        waypoint_axes_marker = None
+
+        if SHOW_WAYPOINT_POINTS:
+
+            waypoint_points_marker = (
+                create_waypoint_points_marker(xyz)
+            )
+            waypoint_points_marker.header.stamp = now
+
+        if SHOW_WAYPOINT_AXES:
+
+            waypoint_axes_marker = (
+                create_waypoint_axes_marker_array(
+                    xyz,
+                    quaternions,
+                )
+            )
+            waypoint_axes_marker.header.stamp = now
+
+        self._waypoint_points_marker = waypoint_points_marker
+        self._waypoint_axes_marker = waypoint_axes_marker
+
         self.marker_pub.publish(
             sphere_marker
         )
@@ -727,6 +928,21 @@ class SphereScanVizNode(Node):
         self.marker_pub.publish(
             sphere_support_marker
         )
+
+        waypoint_markers = [
+            marker
+            for marker in (
+                waypoint_points_marker,
+                waypoint_axes_marker,
+            )
+            if marker is not None
+        ]
+
+        if waypoint_markers:
+
+            self.marker_array_pub.publish(
+                MarkerArray(markers=waypoint_markers)
+            )
 
         self.pose_pub.publish(
             pose_array
@@ -767,6 +983,24 @@ class SphereScanVizNode(Node):
 
             self.marker_pub.publish(
                 self._sphere_support_marker
+            )
+
+        waypoint_markers = [
+            marker
+            for marker in (
+                self._waypoint_points_marker,
+                self._waypoint_axes_marker,
+            )
+            if marker is not None
+        ]
+
+        if waypoint_markers:
+
+            for marker in waypoint_markers:
+                marker.header.stamp = stamp
+
+            self.marker_array_pub.publish(
+                MarkerArray(markers=waypoint_markers)
             )
 
         if self._pose_array is not None:
@@ -1974,6 +2208,16 @@ def main(args=None):
         print(
             f"Accel scale:        "
             f"{MAX_ACCELERATION_SCALING:.2f}"
+        )
+
+        print(
+            f"Waypoint points:    "
+            f"{SHOW_WAYPOINT_POINTS}"
+        )
+
+        print(
+            f"Waypoint axes:      "
+            f"{SHOW_WAYPOINT_AXES}"
         )
 
         print(
