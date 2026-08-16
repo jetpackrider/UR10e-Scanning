@@ -8,6 +8,23 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
 
+    # Custom UR10e + tool description.
+    #
+    # Passed as a full path, and description_package is deliberately left at
+    # its ur_description default. UR's launch files use description_package for
+    # more than locating this file: they also build
+    # <description_package>/config/<ur_type>/{joint_limits,default_kinematics,
+    # physical_parameters,visual_parameters}.yaml and feed those to xacro.
+    # ur10e_tool_description ships only urdf/, so repointing description_package
+    # at it breaks those paths. The full path survives because UR joins it onto
+    # <description_package>/urdf/ and os.path.join drops the prefix when the
+    # second component is absolute.
+    custom_description = PathJoinSubstitution([
+        FindPackageShare("ur10e_tool_description"),
+        "urdf",
+        "ur10e_with_tool.urdf.xacro",
+    ])
+
     # Universal Robots Gazebo + MoveIt launch
     ur_sim_moveit_launch = PathJoinSubstitution([
         FindPackageShare("ur_simulation_gazebo"),
@@ -19,11 +36,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(ur_sim_moveit_launch),
         launch_arguments={
             "ur_type": "ur10e",
-            # description_file is resolved against
-            # <description_package>/urdf/, so both have to be given and the
-            # file is a bare name rather than a full path.
-            "description_package": "ur10e_tool_description",
-            "description_file": "ur10e_with_tool.urdf.xacro",
+            "description_file": custom_description,
         }.items(),
     )
 
