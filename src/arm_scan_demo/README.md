@@ -131,9 +131,11 @@ axes) to see the scan pattern before/while it executes.
 All of these are constants at the top of `move_group_interface.py`:
 - **`SPHERE_CENTER`** (currently `[0.55, 0.0, 0.45]`, in the `base_link`
   frame) and **`SPHERE_RADIUS`** — put these where your actual object is.
-- **`SCAN_RADIUS`** — distance from the object centre that the tool tip is
-  held at. Must clear `SPHERE_RADIUS + TOOL_COLLISION_SPHERE_RADIUS` or every
-  waypoint starts in collision.
+- **`SCAN_RADIUS`** — distance from the object centre that `scanner_frame` is
+  held at. Must clear `SPHERE_RADIUS + SCANNER_COLLISION_SPHERE_RADIUS` or
+  every waypoint starts in collision; the node logs the computed clearance at
+  startup and errors if it goes non-positive.
+- **`SCANNER_COLLISION_SPHERE_RADIUS`** — the scanner's protective envelope.
 - **`NUM_POINTS`**, **`SCAN_PATTERN`** (`full_sphere` / `ring` / `bands`) and
   **`ELEVATIONS_DEG`** (used only by `bands`) if the coverage is too
   sparse/dense or clips the robot's own base.
@@ -142,6 +144,40 @@ All of these are constants at the top of `move_group_interface.py`:
   grey cylinder as a placeholder. If you change its length, move
   `tool_tip_joint`'s origin to match, and keep the geometry offset so it grows
   outward from `tool0` instead of back into the wrist.
+
+## The scanner
+`ur10e_with_tool.urdf.xacro` mounts a scanner past the tool:
+
+```
+tool0 -> tool_link -> tool_tip -> scanner_mount_link -> scanner_head_link -> scanner_frame
+                                                                            ^ 0.21 m from the flange
+```
+
+`scanner_frame` is the frame the scan aims: its local **+Z** points out of the
+scanner's front face, and the waypoints place it `SCAN_RADIUS` from the object
+centre with +Z toward it. It is `END_EFFECTOR_LINK` in the node.
+
+Geometry is driven by xacro properties at the top of the scanner section —
+`scanner_mount_offset_x` (set non-zero to hang the scanner off-axis),
+`scanner_mount_offset_z`, `scanner_body_x/y/z`, and `scanner_standoff`.
+
+**The scanner links carry visual geometry only.** All of its collision is the
+sphere the node attaches to `scanner_head_link`
+(`SCANNER_COLLISION_SPHERE_RADIUS`, default 0.12 m). That sphere is an
+`AttachedCollisionObject`, and its `touch_links` list every robot link, so the
+envelope is ignored against the arm while still blocking the scanner from
+driving into the scan object, the supports and the floor.
+
+This split is deliberate. URDF link collisions can only be excluded through
+`disable_collisions` entries in the SRDF, which comes from `ur_moveit_config`
+and knows nothing about these links — so a scanner with real URDF collision
+geometry would be permanently self-colliding unless you patch a third-party
+package. `touch_links` travels with the message instead.
+
+If you add links to the scanner, add them to `SCANNER_COLLISION_TOUCH_LINKS`
+too. Anything missing from that list is treated as a real collision and will
+fail plans. MoveIt logs `has visual geometry but no collision geometry` for
+the scanner links on startup; that is expected.
 - Gazebo Classic (`ros-humble-ur-simulation-gazebo`) vs. new Gazebo/Ignition
   (`ros-humble-ur-simulation-gz` on some setups) — if your installed UR
   packages use the newer Gazebo, the launch file name and args differ; the

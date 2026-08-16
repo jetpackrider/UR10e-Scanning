@@ -27,7 +27,11 @@ from pymoveit2 import MoveIt2
 
 BASE_FRAME = "base_link"
 PLANNING_GROUP = "ur_manipulator"
-END_EFFECTOR_LINK = "tool_tip"
+
+# The scanner's measurement frame. Its local +Z is what gets aimed at the scan
+# object, and it is what the waypoints position at SCAN_RADIUS. Defined in
+# ur10e_tool_description/urdf/ur10e_with_tool.urdf.xacro.
+END_EFFECTOR_LINK = "scanner_frame"
 
 JOINT_NAMES = [
     "shoulder_pan_joint",
@@ -118,20 +122,38 @@ SPHERE_SUPPORT_CENTER_Z = float(
 
 
 # ============================================================
-# ATTACHED TOOL COLLISION SPHERE
+# ATTACHED SCANNER COLLISION SPHERE
 # ============================================================
 
-TOOL_COLLISION_LINK = "tool_tip"
-TOOL_COLLISION_SPHERE_ID = "tool_collision_sphere"
-TOOL_COLLISION_SPHERE_RADIUS = 0.15
-TOOL_COLLISION_SPHERE_OFFSET = (0.0, 0.0, 0.0)
+# The scanner's protective envelope. The scanner links themselves carry visual
+# geometry only, so this sphere is the scanner's entire collision model: it
+# blocks the scanner from driving into the scan object, the supports and the
+# floor, while being ignored against the robot itself.
+SCANNER_COLLISION_LINK = "scanner_head_link"
+SCANNER_COLLISION_SPHERE_ID = "scanner_collision_sphere"
+SCANNER_COLLISION_SPHERE_RADIUS = 0.12
+SCANNER_COLLISION_SPHERE_OFFSET = (0.0, 0.0, 0.0)
 
-TOOL_COLLISION_TOUCH_LINKS = [
-    "tool_tip",
-    "tool_link",
+# Links the envelope is allowed to overlap. An AttachedCollisionObject's
+# touch_links is the only way to exempt it from self-collision without editing
+# ur_moveit_config's SRDF, so every robot link is listed here. Anything left
+# out is treated as a real collision and will fail plans.
+SCANNER_COLLISION_TOUCH_LINKS = [
+    "base_link",
+    "base_link_inertia",
+    "shoulder_link",
+    "upper_arm_link",
+    "forearm_link",
     "wrist_1_link",
     "wrist_2_link",
     "wrist_3_link",
+    "flange",
+    "tool0",
+    "tool_link",
+    "tool_tip",
+    "scanner_mount_link",
+    "scanner_head_link",
+    "scanner_frame",
 ]
 
 
@@ -1142,16 +1164,16 @@ def add_planning_scene_objects(
         time.sleep(1.0)
 
     logger.info(
-        "Adding tool collision sphere..."
+        "Adding scanner collision sphere..."
     )
 
     moveit2.add_collision_sphere(
-        id=TOOL_COLLISION_SPHERE_ID,
+        id=SCANNER_COLLISION_SPHERE_ID,
         radius=float(
-            TOOL_COLLISION_SPHERE_RADIUS
+            SCANNER_COLLISION_SPHERE_RADIUS
         ),
         position=list(
-            TOOL_COLLISION_SPHERE_OFFSET
+            SCANNER_COLLISION_SPHERE_OFFSET
         ),
         quat_xyzw=[
             0.0,
@@ -1159,20 +1181,22 @@ def add_planning_scene_objects(
             0.0,
             1.0,
         ],
-        frame_id=TOOL_COLLISION_LINK,
+        frame_id=SCANNER_COLLISION_LINK,
     )
 
     time.sleep(0.5)
 
     logger.info(
-        f"Attaching tool collision sphere to "
-        f"{TOOL_COLLISION_LINK}..."
+        f"Attaching scanner collision sphere to "
+        f"{SCANNER_COLLISION_LINK} "
+        f"(exempt from {len(SCANNER_COLLISION_TOUCH_LINKS)} "
+        f"robot links)..."
     )
 
     moveit2.attach_collision_object(
-        id=TOOL_COLLISION_SPHERE_ID,
-        link_name=TOOL_COLLISION_LINK,
-        touch_links=TOOL_COLLISION_TOUCH_LINKS,
+        id=SCANNER_COLLISION_SPHERE_ID,
+        link_name=SCANNER_COLLISION_LINK,
+        touch_links=SCANNER_COLLISION_TOUCH_LINKS,
     )
 
     time.sleep(1.0)
@@ -1212,11 +1236,40 @@ def publish_scene_status(logger):
     )
 
     logger.info(
-        f"Tool collision: "
-        f"ID={TOOL_COLLISION_SPHERE_ID}, "
-        f"link={TOOL_COLLISION_LINK}, "
-        f"radius={TOOL_COLLISION_SPHERE_RADIUS:.3f}"
+        f"Scanner collision: "
+        f"ID={SCANNER_COLLISION_SPHERE_ID}, "
+        f"link={SCANNER_COLLISION_LINK}, "
+        f"radius={SCANNER_COLLISION_SPHERE_RADIUS:.3f}, "
+        f"planning frame={END_EFFECTOR_LINK}"
     )
+
+    # Worst case: the sphere sits on the planning frame itself, so it is
+    # SCAN_RADIUS from the object centre. Any real standoff between
+    # scanner_frame and scanner_head_link only adds margin.
+    clearance = (
+        SCAN_RADIUS
+        - SPHERE_RADIUS
+        - SCANNER_COLLISION_SPHERE_RADIUS
+    )
+
+    if clearance <= 0.0:
+
+        logger.error(
+            f"Scanner envelope overlaps the scan object at every "
+            f"waypoint: SCAN_RADIUS {SCAN_RADIUS:.3f} - "
+            f"SPHERE_RADIUS {SPHERE_RADIUS:.3f} - "
+            f"SCANNER_COLLISION_SPHERE_RADIUS "
+            f"{SCANNER_COLLISION_SPHERE_RADIUS:.3f} = "
+            f"{clearance:.3f} m. Every plan will fail until "
+            f"SCAN_RADIUS is raised or the envelope shrunk."
+        )
+
+    else:
+
+        logger.info(
+            f"Scanner envelope clearance to scan object: "
+            f"{clearance:.3f} m."
+        )
 
 
 # ============================================================

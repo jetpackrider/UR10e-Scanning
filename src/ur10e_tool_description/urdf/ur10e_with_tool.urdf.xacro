@@ -189,6 +189,93 @@
   </joint>
 
   <!-- ============================================================ -->
+  <!-- Scanner                                                       -->
+  <!-- ============================================================ -->
+
+  <!-- Mount bracket offset from the tool. Set scanner_mount_offset_x to
+       hang the scanner off-axis; 0 keeps it coaxial with the flange. -->
+  <xacro:property name="scanner_mount_offset_x" value="0.0"/>
+  <xacro:property name="scanner_mount_offset_z" value="0.02"/>
+
+  <!-- Scanner body. Its local +Z is the viewing direction, so scanner_body_z
+       runs along the axis that gets aimed at the scan target. -->
+  <xacro:property name="scanner_body_x" value="0.09"/>
+  <xacro:property name="scanner_body_y" value="0.05"/>
+  <xacro:property name="scanner_body_z" value="0.07"/>
+
+  <!-- Gap between the front face of the body and scanner_frame. Leave at 0 to
+       put the frame on the face; raise it to model an optical standoff that is
+       separate from the scan node's own SCAN_RADIUS. -->
+  <xacro:property name="scanner_standoff" value="0.0"/>
+
+  <!-- IMPORTANT: the scanner links carry visual geometry only.
+       The scan node attaches a sphere to scanner_head_link as an
+       AttachedCollisionObject, and that message's touch_links is what excludes
+       the envelope from the arm. URDF link collisions cannot be excluded
+       without disable_collisions entries in the SRDF, which comes from
+       ur_moveit_config and knows nothing about these links. Keeping the
+       collision model in the attached sphere keeps it in a file we control. -->
+
+  <link name="scanner_mount_link">
+    <visual>
+      <origin xyz="0 0 ${scanner_mount_offset_z / 2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.04 ${scanner_mount_offset_z}"/>
+      </geometry>
+      <material name="scanner_mount_material">
+        <color rgba="0.25 0.25 0.28 1.0"/>
+      </material>
+    </visual>
+    <inertial>
+      <origin xyz="0 0 ${scanner_mount_offset_z / 2}" rpy="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="0.00002" ixy="0.0" ixz="0.0"
+               iyy="0.00002" iyz="0.0" izz="0.00002"/>
+    </inertial>
+  </link>
+
+  <joint name="scanner_mount_joint" type="fixed">
+    <parent link="tool_tip"/>
+    <child link="scanner_mount_link"/>
+    <origin xyz="${scanner_mount_offset_x} 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="scanner_head_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${scanner_body_x} ${scanner_body_y} ${scanner_body_z}"/>
+      </geometry>
+      <material name="scanner_head_material">
+        <color rgba="0.10 0.45 0.70 1.0"/>
+      </material>
+    </visual>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.3"/>
+      <inertia ixx="0.0003" ixy="0.0" ixz="0.0"
+               iyy="0.0003" iyz="0.0" izz="0.0003"/>
+    </inertial>
+  </link>
+
+  <joint name="scanner_head_joint" type="fixed">
+    <parent link="scanner_mount_link"/>
+    <child link="scanner_head_link"/>
+    <origin xyz="0 0 ${scanner_mount_offset_z + scanner_body_z / 2}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- The frame the scan node aims at the target: +Z points out of the
+       scanner's front face. This is END_EFFECTOR_LINK in
+       move_group_interface.py. -->
+  <link name="scanner_frame"/>
+
+  <joint name="scanner_frame_joint" type="fixed">
+    <parent link="scanner_head_link"/>
+    <child link="scanner_frame"/>
+    <origin xyz="0 0 ${scanner_body_z / 2 + scanner_standoff}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
   <!-- Gazebo                                                        -->
   <!-- ============================================================ -->
 
@@ -200,6 +287,14 @@
     <!-- Gazebo Classic ignores URDF <material>, so restate it here. -->
     <gazebo reference="tool_link">
       <material>Gazebo/DarkGrey</material>
+    </gazebo>
+
+    <gazebo reference="scanner_mount_link">
+      <material>Gazebo/DarkGrey</material>
+    </gazebo>
+
+    <gazebo reference="scanner_head_link">
+      <material>Gazebo/Blue</material>
     </gazebo>
 
     <gazebo>
