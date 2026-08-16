@@ -1,0 +1,18 @@
+# Joint positions the arm is spawned at in Gazebo, in radians.
+#
+# ur_description's own initial_positions.yaml leaves the arm at all zeros,
+# which for a UR is fully extended straight out horizontally - it lies across
+# the table and starts inside the scan object. This is the conventional UR
+# home instead: upper arm and forearm vertical, wrist bent so the tool points
+# forward.
+#
+# Loaded by ur10e_with_tool.urdf.xacro via the initial_positions_file argument.
+# Override it per-launch with
+#   initial_positions_file:=/path/to/your.yaml
+
+shoulder_pan_joint: 0.0
+shoulder_lift_joint: -1.5707963267948966   # -90 deg, upper arm points up
+elbow_joint: 0.0
+wrist_1_joint: -1.5707963267948966         # -90 deg, tool points forward
+wrist_2_joint: 0.0
+wrist_3_joint: 0.0

@@ -1,6 +1,22 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="$(arg name)">
 
+  <!-- WARNING - never write a colon followed by a space anywhere in this file,
+       including inside comments, and never end a line with a colon.
+
+       gazebo_ros2_control hands the generated URDF to the controller_manager
+       node as "- -param robot_description:=<the whole xml>", and rcl parses
+       that override value as YAML. A colon-space makes YAML see a mapping in
+       the middle of a plain scalar, so parsing fails with
+
+         parser error Couldn't parse parameter override rule
+
+       The plugin then aborts before creating controller_manager. Nothing
+       reports a crash - the controller spawners simply retry forever, no
+       joint states are ever published, and robot_state_publisher renders every
+       joint at 0, which for a UR is the fully extended horizontal pose. Use a
+       dash or a comma instead. -->
+
   <!-- ============================================================ -->
   <!-- Arguments                                                     -->
   <!-- ============================================================ -->
@@ -35,9 +51,11 @@
   <xacro:arg name="simulation_controllers"
              default="$(find ur_simulation_gazebo)/config/ur_controllers.yaml"/>
 
-  <!-- Initial joint positions -->
+  <!-- Initial joint positions.
+       Defaults to this package's own file rather than ur_description's, which
+       is all zeros and spawns the arm stretched flat across the table. -->
   <xacro:arg name="initial_positions_file"
-             default="$(find ur_description)/config/initial_positions.yaml"/>
+             default="$(find ur10e_tool_description)/config/initial_positions.yaml"/>
 
   <!-- Robot communication -->
   <xacro:arg name="headless_mode" default="false"/>
@@ -179,7 +197,7 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- Tool tip: the far end of the 0.12 m cylinder. -->
+  <!-- Tool tip - the far end of the 0.12 m cylinder. -->
   <link name="tool_tip"/>
 
   <joint name="tool_tip_joint" type="fixed">
@@ -208,7 +226,7 @@
        separate from the scan node's own SCAN_RADIUS. -->
   <xacro:property name="scanner_standoff" value="0.0"/>
 
-  <!-- IMPORTANT: the scanner links carry visual geometry only.
+  <!-- IMPORTANT - the scanner links carry visual geometry only.
        The scan node attaches a sphere to scanner_head_link as an
        AttachedCollisionObject, and that message's touch_links is what excludes
        the envelope from the arm. URDF link collisions cannot be excluded
@@ -264,7 +282,7 @@
     <origin xyz="0 0 ${scanner_mount_offset_z + scanner_body_z / 2}" rpy="0 0 0"/>
   </joint>
 
-  <!-- The frame the scan node aims at the target: +Z points out of the
+  <!-- The frame the scan node aims at the target. Local +Z points out of the
        scanner's front face. This is END_EFFECTOR_LINK in
        move_group_interface.py. -->
   <link name="scanner_frame"/>
